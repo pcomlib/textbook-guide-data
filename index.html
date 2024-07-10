@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta http-equiv="X-UA-Compatible" content="ie=edge">
+	
+	<style>
+		body {
+			padding: .25rem 1rem;
+			max-width: 90ch;
+		}
+		
+		p {
+			margin: 0;
+		}
+		
+		h1 {
+			line-height: 1;
+			font-size: 2.25rem;
+			font-weight: bold;
+			margin: 0 0 1rem;
+			border-top: solid 3px;			
+			border-bottom: solid 3px;
+			padding: .375rem;
+		}
+		h2 {
+			line-height: 1;
+			font-size: 1.625rem;
+			font-weight: bold;
+			border-bottom: solid 2px;
+			padding-bottom: .25rem;
+			margin: 1.5rem 0 .5rem;
+			
+		}
+		
+		label {
+			display: block;
+			line-height: 1;
+			font-size: 1.125rem;
+			font-weight: bold;
+			margin: 1rem 0 .375rem;
+		}
+		
+		button, textarea {
+			font: inherit;
+			border: solid 2px;
+		}
+		
+		textarea {
+			width: 100%;
+			height: 7rem;
+			padding: .25rem;
+			display: block;
+			font-size: .9125rem;
+			resize: vertical;
+		}
+	
+		button {
+			padding: .5em .5em;
+			font-weight: bold;
+		}
+	
+		button#copy {
+			margin-top: .375rem;
+		}
+	</style>
+	
+	<title>Grab Current Textbooks Tool</title>
+</head>
+<body>
+
+<h1>Grab Current Textbooks Tool</h1>
+
+<p>
+Please do not share this page unless you have contacted Kate Deibel first. 
+The usage of the API here is not the most secure. 
+</p>
+
+<h2>Running</h2>
+
+<p>
+Run the app below to fetch all book assets found on the 
+<a href="https://libguides.pcom.edu/textbooks/">Textbooks guide</a>.
+Then, use the <i>Copy to Clipboard</i> button and paste into a blank 
+sheet in Excel or Sheets. The data is tab-delimited so it should paste 
+without issue. You will then have to format the data as you will. Feel 
+free to delete any unneeded columns as there are no formulas to mess up.
+</p>
+
+<label for="text-tsv">TSV (Tab-Separated Values)</label>
+<textarea id="text-tsv"></textarea>
+<button id="fetch">Fetch Textbook Data</button>
+<button id="copy">Copy to Clipboard</button> <span id="copy-feedback"></span>
+
+<h2>Debugging</h2>
+<button id="clear">Clear All Boxes</button>
+
+<label for="text-log">Log</label>
+<textarea id="text-log"></textarea>
+
+<label for="text-response">Raw Response (JSON)</label>
+<textarea id="text-response"></textarea>
+
+
+
+<script>
+	const VENDORS = {
+		'clinicalkey': 'ClinicalKey',
+		'lwwhealthlibrary': 'LWW',
+		'ebookcentral.proquest': 'Ebooks - Proquest',
+		'thieme.com': 'Thieme',
+		'pharmacylibrary': 'Pharmacy Library',
+		'psychiatryonline': 'Psychiatry Online',
+		'statref.com': 'StatRef',
+		'sciencedirect': 'Science Direct',
+		'nih.gov': 'NIH',
+		'r2library': 'R2 Library',
+		'springer.com': 'Springer',
+		'ovid.com': 'OVID',
+		'mhmedical': 'McGraw Hill',
+		'search.ebscohost': 'EBSCO Host',
+		'mhebooklibrary.com': 'McGraw Hill'
+	}
+
+	var theJSON;
+	function timeStamp(timezone) {
+		let now = new Date( (new Date()).toLocaleString('en-US', { timeZone: timezone }) );
+		let ts = '';
+		ts = ts + now.getFullYear() + '-';
+		ts = ts + String(now.getMonth()).padStart(2,0) + '-';
+		ts = ts + String(now.getDate()).padStart(2,0) + ' ';
+		ts = ts + String(now.getHours()).padStart(2,0) + ':';
+		ts = ts + String(now.getMinutes()).padStart(2,0) + ':';
+		ts = ts + String(now.getSeconds()).padStart(2,0) + '.';
+		ts = ts + String((new Date()).getMilliseconds()).padStart(3,0);
+		
+		return ts;
+	}
+	
+	function logEvent(event) {
+		let timestamp = timeStamp('America/New_York');
+
+		let log = document.getElementById('text-log');
+		if(log.value.length > 0)
+			log.value = log.value + '\n' + '[' + timestamp + '] ' + event;
+		else
+			log.value = '[' + timestamp + '] ' + event;		
+		log.scrollTop = log.scrollHeight; /* moves scroll to bottom */
+	}
+
+	async function fetchBooks() {
+		let raw = document.getElementById('text-response');
+		const url = 'https://lgapi-us.libapps.com/1.1/assets?site_id=4408&key=6dcc3700587a2b4c54429df50331c65c&asset_types=5&guide_ids=1268269&expand=subjects,icons';
+		try {
+			logEvent('Fetching data...');
+			response = await fetch(url);
+			logEvent('Processing received data...');
+			json = await response.json();
+			raw.value = JSON.stringify(json);
+			logEvent('Converting to TSV...');
+			await processJSON(json);
+			logEvent('Processing complete.');
+			theJSON = json;
+		}
+		catch(error) {
+			logEvent('Fetch cancelled due to:\n\t' + error);
+		}
+	}
+	
+	async function processJSON(json) {
+		let joiner = '\t';
+	
+		let tsv = document.getElementById('text-tsv');
+		let headers = [
+			'ID',
+			'Title',
+			'Author',
+			'Pub Date',
+			'Call Number',
+			'URL',
+			'Proxy Enabled',
+			'Vendor',
+			'Cover URL',
+			'Alt Text',
+			'Subjects',
+			'Has Textbook Subject',
+			'Print URL',
+			'Other Icons'
+		];
+		
+		tsv.value = headers.join(joiner);
+		
+		// process each book asset as a row 
+		for(i=0; i<json.length; i++) {
+			let book = [];
+			
+			// id
+			book.push( json[i]['id'] );
+			
+			// title
+			book.push( json[i]['name'] );
+			// author
+			book.push( json[i]['meta']['author'] );
+			// pub date
+			book.push( json[i]['meta']['pub_date'] );
+			// call number
+			book.push( json[i]['meta']['call_number'] );
+			
+			// url
+			let url = json[i]['url'];
+			book.push( url );
+			// proxied
+			book.push( (json[i]['meta']['enable_proxy']==1) ? true : false );
+			
+			// vendor
+			if(url.length > 0) {
+				let flag = false;
+				for (const [key, value] of Object.entries(VENDORS)) {
+					if(!flag && url.includes(key)) {
+						book.push(value);
+						flag = true;
+					}
+				}
+				if(!flag) book.push('');
+			}
+			else
+				book.push('');
+			
+			// cover url
+			book.push( json[i]['meta']['cover_url'] );
+			// alt text
+			book.push( json[i]['meta']['tn_alt_text'] );
+			
+			// subjects
+			if( json[i].hasOwnProperty('subjects') ) {
+				let subjects = [];
+				let s_len = json[i]['subjects'].length;
+				for(s=0; s<s_len; s++)
+					subjects.push( json[i]['subjects'][s]['name'] );
+				// list of subjects
+				book.push( subjects.join(', ') );
+				// has textbook subject
+				book.push( subjects.includes('zzz_textbooks') );
+			}
+			else {
+				// list of subjects
+				book.push('');
+				// has textbook subject
+				book.push(false);
+			}
+			
+			// icons
+			let print_url = ''
+			let other_icons = [];
+			if( json[i].hasOwnProperty('icons') ) {
+
+				let icon_length = json[i]['icons'].length;
+				for(ic=0; ic<icon_length; ic++) {
+					if(json[i]['icons'][ic]['id'] == 11800)
+						print_url = json[i]['icons'][ic]['custom_url'];
+					else 
+						other_icons.push( json[i]['icons'][ic]['id'] );
+				}
+				// print URL
+				book.push(print_url);
+				// other icons
+				book.push( other_icons.join(', ') );
+			}
+			else {
+				// print URL
+				book.push('');
+				// other icons
+				book.push('');
+			}
+			
+			tsv.value = tsv.value + '\n' + book.join(joiner);
+		}
+	}
+	
+	async function copyTSVtoClipboard() {
+		try {
+			document.getElementById('copy-feedback').value = '';
+			let txt = document.getElementById('text-tsv').value;
+			await navigator.clipboard.writeText(txt);
+			document.getElementById('copy-feedback').innerHTML = 'Copied to clipboard.';
+			setTimeout(() => { document.getElementById('copy-feedback').innerHTML = ''; }, 4000);
+			
+		} catch (err) {
+			document.getElementById('copy-feedback').innerHTML = 'Copy failed.';
+			console.error('Failed to copy text: ', err);
+		}
+	}
+	
+	// Onload events
+	document.getElementById('fetch').addEventListener('click', function(evt) {
+		fetchBooks();
+	});
+	
+	document.getElementById('clear').addEventListener('click', function(evt) {
+		document.getElementById('text-log').value = '';
+		document.getElementById('text-response').value = '';
+		document.getElementById('text-tsv').value = '';
+		document.getElementById('copy-feedback').innerHTML = '';
+	});
+	
+	document.getElementById('copy').addEventListener('click', function(evt) {
+		copyTSVtoClipboard();
+	});
+	
+</script>
+
+
+</body>
+</html>
+
